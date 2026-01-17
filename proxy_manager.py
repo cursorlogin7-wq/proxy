@@ -24,7 +24,7 @@ class ProxyManager:
     def __init__(self):
         self.proxies: List[Proxy] = [] # This will hold ONLY working proxies
         self.best_proxy: Optional[Proxy] = None
-        self.test_target = "http://www.google.com" 
+        self.test_target = "https://www.youtube.com" 
         self.timeout = 5 # seconds
         self.concurrency_limit = 20 # Higher concurrency
         self._lock = asyncio.Lock() # Lock for thread-safe updates to self.proxies
