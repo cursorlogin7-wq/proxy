@@ -40,3 +40,10 @@ async def get_proxies():
         return {"proxies": []}
     # Return top 50 proxies
     return {"proxies": [p.to_dict() for p in proxy_manager.proxies[:50]]}
+
+@app.get("/api/force")
+async def force_update_proxy():
+    if not updater:
+        return {"status": "error", "message": "Updater not initialized"}
+    result = await updater.force_update()
+    return result

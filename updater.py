@@ -39,7 +39,7 @@ class ProxyUpdater:
         """Main loop: Check health every 1 min, rotate only if needed."""
         self.running = True
         while self.running:
-            logger.info("Executing maintenance cycle (1-minute interval)...")
+            logger.info("Executing maintenance cycle (10-second interval)...")
             now = time.time()
             
             # 1. Health Check Current Proxy
@@ -83,9 +83,30 @@ class ProxyUpdater:
                 else:
                     logger.warning("No working proxies available to switch to.")
             
-            # Sleep 60 seconds (1 minute update interval)
-            logger.info("Sleeping for 60 seconds...")
-            await asyncio.sleep(60)
+            # Sleep 10 seconds (10s update interval)
+            logger.info("Sleeping for 10 seconds...")
+            await asyncio.sleep(10)
+
+    async def force_update(self):
+        """Force an immediate update to the best available proxy."""
+        logger.info("Force update requested.")
+        
+        if not self.pm.best_proxy:
+            # Try to refresh if no proxy is known
+            await self.pm.refresh_proxies()
+
+        if self.pm.best_proxy:
+            logger.info(f"Verifying best proxy {self.pm.best_proxy.url} for force update...")
+            latency = await self.pm.verify_proxy_latency(self.pm.best_proxy)
+            self.pm.best_proxy.latency = latency
+            
+            if latency != float('inf'):
+                await self.update_remote(self.pm.best_proxy)
+                return {"status": "success", "message": f"Updated to {self.pm.best_proxy.url}", "proxy": self.pm.best_proxy.to_dict()}
+            else:
+                return {"status": "error", "message": "Best proxy failed verification"}
+        else:
+             return {"status": "error", "message": "No proxies available"}
 
     def stop(self):
         self.running = False
