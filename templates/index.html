@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proxy Rotation Service</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --accent: #3b82f6;
+            --success: #22c55e;
+            --error: #ef4444;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 2rem;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 1rem;
+        }
+
+        h1 {
+            font-weight: 300;
+            font-size: 2.5rem;
+            margin: 0;
+        }
+
+        .status-card {
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-item {
+            text-align: center;
+        }
+
+        .status-label {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .status-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+
+        .status-value.highlight {
+            color: var(--accent);
+        }
+
+        .proxy-list {
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid #334155;
+        }
+
+        th {
+            background-color: #334155;
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        tr:hover {
+            background-color: #273548;
+        }
+
+        .latency-good {
+            color: var(--success);
+        }
+
+        .latency-bad {
+            color: var(--error);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-secondary);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h1>Proxy Rotation Service</h1>
+                <div style="font-size: 0.8rem; color: var(--text-secondary);">Auto-refreshing every 2s</div>
+            </div>
+        </header>
+
+        <!-- Current Status -->
+        <div class="status-card">
+            <div class="status-item">
+                <div class="status-label">Current Best Proxy</div>
+                <div class="status-value highlight" id="best-proxy-url">Searching...</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Protocol</div>
+                <div class="status-value" id="best-proxy-protocol">-</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Latency</div>
+                <div class="status-value" id="best-proxy-latency">-</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Total Active Proxies</div>
+                <div class="status-value" id="total-proxies">0</div>
+            </div>
+        </div>
+
+        <!-- Proxy List -->
+        <div class="proxy-list">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Proxy URL</th>
+                        <th>Protocol</th>
+                        <th>IP</th>
+                        <th>Port</th>
+                        <th>Latency (ms)</th>
+                    </tr>
+                </thead>
+                <tbody id="proxy-table-body">
+                    <!-- Populated by JS -->
+                </tbody>
+            </table>
+            <div id="loading-msg" class="loading">Waiting for results...</div>
+        </div>
+    </div>
+
+    <script>
+        async function updateDashboard() {
+            try {
+                // Fetch Status
+                const statusRes = await fetch('/api/status');
+                const statusData = await statusRes.json();
+
+                const best = statusData.best_proxy;
+                document.getElementById('total-proxies').innerText = statusData.total_available;
+
+                if (best) {
+                    document.getElementById('best-proxy-url').innerText = best.url;
+                    document.getElementById('best-proxy-protocol').innerText = best.protocol.toUpperCase();
+
+                    const latency = best.latency.toFixed(2);
+                    const latEl = document.getElementById('best-proxy-latency');
+                    latEl.innerText = latency + ' ms';
+                    latEl.className = 'status-value ' + (best.latency < 200 ? 'latency-good' : 'latency-bad');
+                } else {
+                    document.getElementById('best-proxy-url').innerText = "Searching...";
+                    document.getElementById('best-proxy-protocol').innerText = "-";
+                    document.getElementById('best-proxy-latency').innerText = "-";
+                }
+
+                // Fetch Proxy List
+                const listRes = await fetch('/api/proxies');
+                const listData = await listRes.json();
+
+                const tbody = document.getElementById('proxy-table-body');
+                tbody.innerHTML = '';
+
+                if (listData.proxies.length > 0) {
+                    document.getElementById('loading-msg').style.display = 'none';
+                    listData.proxies.forEach(p => {
+                        const tr = document.createElement('tr');
+                        const latClass = p.latency < 200 ? 'latency-good' : 'latency-bad';
+                        tr.innerHTML = `
+                            <td>${p.url}</td>
+                            <td>${p.protocol}</td>
+                            <td>${p.ip}</td>
+                            <td>${p.port}</td>
+                            <td class="${latClass}">${p.latency.toFixed(2)}</td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                }
+
+            } catch (e) {
+                console.error("Error updating dashboard:", e);
+            }
+        }
+
+        // Initial call
+        updateDashboard();
+
+        // Poll every 2 seconds
+        setInterval(updateDashboard, 2000);
+    </script>
+</body>
+
+</html>

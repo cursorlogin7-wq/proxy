@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+aiohttp
+aiohttp-socks
+requests
+schedule
+jinja2
