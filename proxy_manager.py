@@ -16,6 +16,7 @@ class Proxy:
     ip: str
     port: str
     latency: float = float('inf')
+    source: str = "unknown"
 
     def to_dict(self):
         return asdict(self)
@@ -24,38 +25,16 @@ class ProxyManager:
     def __init__(self):
         self.proxies: List[Proxy] = [] # This will hold ONLY working proxies
         self.best_proxy: Optional[Proxy] = None
-        self.test_target = "https://www.youtube.com" 
-        self.timeout = 5 # seconds
-        self.concurrency_limit = 20 # Higher concurrency
+        self.test_target = "https://www.youtube.com/watch?v=2FE7pOBbRn8" 
+        self.timeout = 10 # seconds
+        self.concurrency_limit = 50 # Higher concurrency
         self._lock = asyncio.Lock() # Lock for thread-safe updates to self.proxies
 
-    async def fetch_json_proxies(self) -> List[Proxy]:
-        """Fetch proxies from proxies.free JSON source."""
-        url = f"https://proxies.free/data/proxies.json?t={int(time.time())}"
-        fetched = []
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        for p in data.get('proxies', []):
-                            # Filter for http/https/socks5 only
-                            protocol = p.get('protocol', '').lower()
-                            if protocol in ['http', 'https', 'socks5']:
-                                proxy_url = f"{protocol}://{p['ip']}:{p['port']}"
-                                fetched.append(Proxy(
-                                    url=proxy_url,
-                                    protocol=protocol,
-                                    ip=p['ip'],
-                                    port=p['port']
-                                ))
-        except Exception as e:
-            logger.error(f"Error fetching JSON proxies: {e}")
-        return fetched
 
-    async def fetch_txt_proxies(self) -> List[Proxy]:
-        """Fetch proxies from proxifly TXT source."""
-        url = "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/all/data.txt"
+
+    async def fetch_socks5_github(self) -> List[Proxy]:
+        """Fetch SOCKS5 proxies from TheSpeedX GitHub."""
+        url = "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt"
         fetched = []
         try:
             async with aiohttp.ClientSession() as session:
@@ -67,19 +46,46 @@ class ProxyManager:
                             if not line:
                                 continue
                             try:
-                                protocol, rest = line.split('://')
-                                ip, port = rest.split(':')
-                                if protocol.lower() in ['http', 'https', 'socks5']:
-                                    fetched.append(Proxy(
-                                        url=line,
-                                        protocol=protocol.lower(),
-                                        ip=ip,
-                                        port=port
-                                    ))
+                                ip, port = line.split(':')
+                                fetched.append(Proxy(
+                                    url=f"socks5://{ip}:{port}",
+                                    protocol="socks5",
+                                    ip=ip,
+                                    port=port,
+                                    source="github_socks5"
+                                ))
                             except ValueError:
                                 continue
         except Exception as e:
-            logger.error(f"Error fetching TXT proxies: {e}")
+            logger.error(f"Error fetching GitHub SOCKS5 proxies: {e}")
+        return fetched
+
+    async def fetch_http_github(self) -> List[Proxy]:
+        """Fetch HTTP proxies from TheSpeedX GitHub."""
+        url = "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt"
+        fetched = []
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        text = await response.text()
+                        for line in text.splitlines():
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                ip, port = line.split(':')
+                                fetched.append(Proxy(
+                                    url=f"http://{ip}:{port}",
+                                    protocol="http",
+                                    ip=ip,
+                                    port=port,
+                                    source="github_http"
+                                ))
+                            except ValueError:
+                                continue
+        except Exception as e:
+            logger.error(f"Error fetching GitHub HTTP proxies: {e}")
         return fetched
 
     async def check_and_add_proxy(self, proxy: Proxy, semaphore: asyncio.Semaphore):
@@ -119,13 +125,43 @@ class ProxyManager:
     async def refresh_proxies(self) -> List[Proxy]:
         """Fetch and test all proxies."""
         logger.info("Fetching proxies...")
-        p1 = await self.fetch_json_proxies()
-        p2 = await self.fetch_txt_proxies()
+        # Only use GitHub sources
+        p1 = await self.fetch_socks5_github()
+        p2 = await self.fetch_http_github()
         
-        # Deduplicate
+        # Deduplicate and Balance
+        def dedupe(proxies):
+            seen = set()
+            out = []
+            for p in proxies:
+                if p.url not in seen:
+                    seen.add(p.url)
+                    out.append(p)
+            return out
+
+        p1 = dedupe(p1)
+        p2 = dedupe(p2)
+        
+        # Balance: Take equal number from each source
+        counts = [len(p1), len(p2)]
+        non_zero_counts = [c for c in counts if c > 0]
+        
+        if not non_zero_counts:
+             min_count = 0
+        else:
+             min_count = min(non_zero_counts)
+
+        logger.info(f"Balancing proxies: GH_SOCKS5={len(p1)}, GH_HTTP={len(p2)}. Taking {min_count} from each available.")
+        
+        def slice_list(lst, count):
+             return lst[:count] if lst else []
+
+        balanced_proxies = slice_list(p1, min_count) + slice_list(p2, min_count)
+        
+        # Global deduplication
         seen = set()
         unique_proxies = []
-        for p in p1 + p2:
+        for p in balanced_proxies:
             if p.url not in seen:
                 seen.add(p.url)
                 unique_proxies.append(p)
